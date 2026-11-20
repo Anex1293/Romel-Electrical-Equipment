@@ -1,0 +1,219 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isNonNegNum(val) {
+      return (val is int || val is float) && val >= 0;
+    }
+
+    function isHexSha256(val) {
+      return val is string && val.size() == 64 && val.matches('^[0-9a-f]{64}$');
+    }
+
+    function hasValidAdminBatchProof(expectedOp) {
+      return exists(/databases/$(database)/documents/admin_config/credentials) &&
+        existsAfter(/databases/$(database)/documents/admin_auth_proofs/batch_proof) &&
+        getAfter(/databases/$(database)/documents/admin_auth_proofs/batch_proof).data.proofHash ==
+          get(/databases/$(database)/documents/admin_config/credentials).data.credentialHash &&
+        getAfter(/databases/$(database)/documents/admin_auth_proofs/batch_proof).data.op == expectedOp &&
+        getAfter(/databases/$(database)/documents/admin_auth_proofs/batch_proof).data.updatedAt == request.time;
+    }
+
+    function isValidCategory(data) {
+      return data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.description is string && data.description.size() <= 500 &&
+        data.sortOrder is int && data.sortOrder >= 0 &&
+        data.catalogStatus in ['ACTIVE', 'ARCHIVED'];
+    }
+
+    function isValidProduct(data) {
+      return data.code is string && data.code.size() >= 1 && data.code.size() <= 64 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 120 &&
+        data.series is string && data.series.size() >= 1 && data.series.size() <= 120 &&
+        data.description is string && data.description.size() <= 1000 &&
+        data.specifications is string && data.specifications.size() <= 2000 &&
+        data.catalogPage is int && data.catalogPage >= 0 &&
+        data.imageAsset is string && data.imageAsset.size() <= 256 &&
+        (!('customImageUri' in data) || (data.customImageUri is string && data.customImageUri.size() <= 500)) &&
+        data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 32 &&
+        data.piecesPerBox is int && data.piecesPerBox >= 1 &&
+        data.piecesPerCarton is int && data.piecesPerCarton >= 1 &&
+        (!('sellingPrice' in data) || isNonNegNum(data.sellingPrice)) &&
+        (!('wholesalePrice' in data) || isNonNegNum(data.wholesalePrice)) &&
+        (!('retailPrice' in data) || isNonNegNum(data.retailPrice)) &&
+        (!('discountPrice' in data) || isNonNegNum(data.discountPrice)) &&
+        (!('stockQuantity' in data) || (data.stockQuantity is int && data.stockQuantity >= 0)) &&
+        data.lowStockThreshold is int && data.lowStockThreshold >= 0 &&
+        data.needsReview is bool &&
+        (!('reviewNote' in data) || (data.reviewNote is string && data.reviewNote.size() <= 500)) &&
+        data.catalogStatus in ['ACTIVE', 'ARCHIVED'] &&
+        (!('availabilityStatus' in data) || data.availabilityStatus in ['AVAILABLE', 'OUT_OF_STOCK', 'UNAVAILABLE']) &&
+        data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128;
+    }
+
+    function isValidStockMovement(data) {
+      return data.productId is string && data.productId.size() >= 1 && data.productId.size() <= 128 &&
+        data.productCode is string && data.productCode.size() >= 1 && data.productCode.size() <= 64 &&
+        data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 160 &&
+        data.movementType in ['STOCK_IN', 'STOCK_OUT', 'SALE', 'PRICE_UPDATE', 'IMPORT'] &&
+        data.quantityDelta is int &&
+        (!('previousStock' in data) || (data.previousStock is int && data.previousStock >= 0)) &&
+        (!('newStock' in data) || (data.newStock is int && data.newStock >= 0)) &&
+        (!('previousPrice' in data) || isNonNegNum(data.previousPrice)) &&
+        (!('newPrice' in data) || isNonNegNum(data.newPrice)) &&
+        data.reason is string && data.reason.size() <= 500 &&
+        data.performedByName is string && data.performedByName.size() >= 1 && data.performedByName.size() <= 100;
+    }
+
+    // Public admin initialization status & salt (zero secret values exposed)
+    match /admin_config/status {
+      allow get: if true;
+      allow list: if false;
+
+      allow create: if !exists(/databases/$(database)/documents/admin_config/credentials) &&
+        existsAfter(/databases/$(database)/documents/admin_config/credentials) &&
+        isHexSha256(getAfter(/databases/$(database)/documents/admin_config/credentials).data.credentialHash) &&
+        incoming().keys().hasAll(['initialized', 'salt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['initialized', 'salt', 'updatedAt']) &&
+        incoming().initialized == true &&
+        incoming().salt is string && incoming().salt.size() >= 16 && incoming().salt.size() <= 64 &&
+        incoming().updatedAt is timestamp && incoming().updatedAt == request.time;
+
+      allow update, delete: if false;
+    }
+
+    // Write-once, strictly unreadable salted SHA-256 credential digest
+    match /admin_config/credentials {
+      allow read: if false;
+
+      allow create: if !exists(/databases/$(database)/documents/admin_config/credentials) &&
+        existsAfter(/databases/$(database)/documents/admin_config/status) &&
+        getAfter(/databases/$(database)/documents/admin_config/status).data.initialized == true &&
+        incoming().keys().hasAll(['credentialHash', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['credentialHash', 'createdAt', 'updatedAt']) &&
+        isHexSha256(incoming().credentialHash) &&
+        incoming().createdAt is timestamp && incoming().createdAt == request.time &&
+        incoming().updatedAt is timestamp && incoming().updatedAt == request.time;
+
+      allow update, delete: if false;
+    }
+
+    // Write-only admin authentication & mutation proofs (strictly unreadable)
+    match /admin_auth_proofs/{proofId} {
+      allow read: if false;
+
+      allow create, update: if isValidId(proofId) &&
+        exists(/databases/$(database)/documents/admin_config/credentials) &&
+        incoming().keys().hasAll(['proofHash', 'op', 'updatedAt']) &&
+        incoming().keys().hasOnly(['proofHash', 'op', 'updatedAt']) &&
+        isHexSha256(incoming().proofHash) &&
+        incoming().proofHash == get(/databases/$(database)/documents/admin_config/credentials).data.credentialHash &&
+        incoming().op in ['LOGIN', 'CREATE', 'UPDATE', 'DELETE', 'SEED'] &&
+        incoming().updatedAt is timestamp && incoming().updatedAt == request.time;
+
+      allow delete: if false;
+    }
+
+    // Categories: open read for active catalog browsing; Admin proof required for add/edit/delete
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId) && existing().catalogStatus == 'ACTIVE';
+      allow list: if existing().catalogStatus == 'ACTIVE';
+
+      allow create: if isValidId(categoryId) &&
+        (hasValidAdminBatchProof('CREATE') || hasValidAdminBatchProof('SEED')) &&
+        incoming().keys().hasAll(['name', 'description', 'sortOrder', 'catalogStatus', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['name', 'description', 'sortOrder', 'catalogStatus', 'createdAt', 'updatedAt']) &&
+        incoming().createdAt is timestamp && incoming().createdAt == request.time &&
+        incoming().updatedAt is timestamp && incoming().updatedAt == request.time &&
+        isValidCategory(incoming());
+
+      allow update: if isValidId(categoryId) &&
+        hasValidAdminBatchProof('UPDATE') &&
+        isValidCategory(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt is timestamp && incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'sortOrder', 'catalogStatus', 'updatedAt']);
+
+      allow delete: if isValidId(categoryId) && hasValidAdminBatchProof('DELETE');
+    }
+
+    // Products: open read for active catalog browsing; Admin proof required for add/edit/price/availability/delete
+    match /products/{productId} {
+      allow get: if isValidId(productId) && existing().catalogStatus == 'ACTIVE';
+      allow list: if existing().catalogStatus == 'ACTIVE';
+
+      allow create: if isValidId(productId) &&
+        (hasValidAdminBatchProof('CREATE') || hasValidAdminBatchProof('SEED')) &&
+        incoming().keys().hasAll([
+          'code', 'name', 'category', 'series', 'description', 'specifications',
+          'catalogPage', 'imageAsset', 'unit', 'piecesPerBox', 'piecesPerCarton',
+          'lowStockThreshold', 'needsReview', 'catalogStatus', 'updatedBy', 'createdAt', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'code', 'name', 'category', 'series', 'description', 'specifications',
+          'catalogPage', 'imageAsset', 'customImageUri', 'unit', 'piecesPerBox', 'piecesPerCarton',
+          'sellingPrice', 'wholesalePrice', 'retailPrice', 'discountPrice',
+          'stockQuantity', 'lowStockThreshold', 'needsReview', 'reviewNote',
+          'catalogStatus', 'availabilityStatus', 'updatedBy', 'createdAt', 'updatedAt'
+        ]) &&
+        incoming().createdAt is timestamp && incoming().createdAt == request.time &&
+        incoming().updatedAt is timestamp && incoming().updatedAt == request.time &&
+        isValidProduct(incoming());
+
+      allow update: if isValidId(productId) &&
+        hasValidAdminBatchProof('UPDATE') &&
+        isValidProduct(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt is timestamp && incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'code', 'name', 'category', 'series', 'description', 'specifications',
+          'catalogPage', 'imageAsset', 'customImageUri', 'unit', 'piecesPerBox', 'piecesPerCarton',
+          'sellingPrice', 'wholesalePrice', 'retailPrice', 'discountPrice',
+          'stockQuantity', 'lowStockThreshold', 'needsReview', 'reviewNote',
+          'catalogStatus', 'availabilityStatus', 'updatedBy', 'updatedAt'
+        ]);
+
+      allow delete: if isValidId(productId) && hasValidAdminBatchProof('DELETE');
+    }
+
+    // Stock & price movement audit log: immutable non-PII records written by Admin only
+    match /stock_movements/{movementId} {
+      allow get: if isValidId(movementId);
+      allow list: if existing().movementType in ['STOCK_IN', 'STOCK_OUT', 'SALE', 'PRICE_UPDATE', 'IMPORT'];
+
+      allow create: if isValidId(movementId) &&
+        (hasValidAdminBatchProof('UPDATE') || hasValidAdminBatchProof('CREATE') || hasValidAdminBatchProof('SEED')) &&
+        incoming().keys().hasAll([
+          'productId', 'productCode', 'productName', 'movementType',
+          'quantityDelta', 'reason', 'performedByName', 'createdAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'productId', 'productCode', 'productName', 'movementType',
+          'quantityDelta', 'previousStock', 'newStock', 'previousPrice', 'newPrice',
+          'reason', 'performedByName', 'createdAt'
+        ]) &&
+        incoming().createdAt is timestamp && incoming().createdAt == request.time &&
+        isValidStockMovement(incoming());
+
+      allow update, delete: if false;
+    }
+  }
+}

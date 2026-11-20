@@ -1,0 +1,130 @@
+{
+  "entities": {
+    "AdminConfigStatus": {
+      "title": "AdminConfigStatus",
+      "description": "Public initialization status and cryptographic salt for admin verification (never stores credentials or hashes).",
+      "type": "object",
+      "properties": {
+        "initialized": { "type": "boolean" },
+        "salt": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["initialized", "salt", "updatedAt"]
+    },
+    "AdminCredentials": {
+      "title": "AdminCredentials",
+      "description": "Write-once, unreadable salted SHA-256 hash of administrator username and password.",
+      "type": "object",
+      "properties": {
+        "credentialHash": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["credentialHash", "createdAt", "updatedAt"]
+    },
+    "AdminAuthProof": {
+      "title": "AdminAuthProof",
+      "description": "Unreadable write-only proof document written atomically inside admin WriteBatches.",
+      "type": "object",
+      "properties": {
+        "proofHash": { "type": "string" },
+        "op": { "type": "string", "enum": ["LOGIN", "CREATE", "UPDATE", "DELETE", "SEED"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["proofHash", "op", "updatedAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "ROMEL product category definition.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "sortOrder": { "type": "integer" },
+        "catalogStatus": { "type": "string", "enum": ["ACTIVE", "ARCHIVED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "description", "sortOrder", "catalogStatus", "createdAt", "updatedAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "ROMEL electrical equipment product record with pricing, stock, availability, specs, and image link.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "series": { "type": "string" },
+        "description": { "type": "string" },
+        "specifications": { "type": "string" },
+        "catalogPage": { "type": "integer" },
+        "imageAsset": { "type": "string" },
+        "customImageUri": { "type": "string" },
+        "unit": { "type": "string" },
+        "piecesPerBox": { "type": "integer" },
+        "piecesPerCarton": { "type": "integer" },
+        "sellingPrice": { "type": "number" },
+        "wholesalePrice": { "type": "number" },
+        "retailPrice": { "type": "number" },
+        "discountPrice": { "type": "number" },
+        "stockQuantity": { "type": "integer" },
+        "lowStockThreshold": { "type": "integer" },
+        "needsReview": { "type": "boolean" },
+        "reviewNote": { "type": "string" },
+        "catalogStatus": { "type": "string", "enum": ["ACTIVE", "ARCHIVED"] },
+        "availabilityStatus": { "type": "string", "enum": ["AVAILABLE", "OUT_OF_STOCK", "UNAVAILABLE"] },
+        "updatedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "name", "category", "series", "description", "specifications", "catalogPage", "imageAsset", "unit", "piecesPerBox", "piecesPerCarton", "lowStockThreshold", "needsReview", "catalogStatus", "updatedBy", "createdAt", "updatedAt"]
+    },
+    "StockMovement": {
+      "title": "StockMovement",
+      "description": "Immutable stock and price change history entry.",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "productCode": { "type": "string" },
+        "productName": { "type": "string" },
+        "movementType": { "type": "string", "enum": ["STOCK_IN", "STOCK_OUT", "SALE", "PRICE_UPDATE", "IMPORT"] },
+        "quantityDelta": { "type": "integer" },
+        "previousStock": { "type": "integer" },
+        "newStock": { "type": "integer" },
+        "previousPrice": { "type": "number" },
+        "newPrice": { "type": "number" },
+        "reason": { "type": "string" },
+        "performedByName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["productId", "productCode", "productName", "movementType", "quantityDelta", "reason", "performedByName", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/admin_config/status": {
+      "schema": { "$ref": "#/entities/AdminConfigStatus" },
+      "description": "Admin initialization status and salt."
+    },
+    "/admin_config/credentials": {
+      "schema": { "$ref": "#/entities/AdminCredentials" },
+      "description": "Unreadable salted credential hash for admin authorization."
+    },
+    "/admin_auth_proofs/{proofId}": {
+      "schema": { "$ref": "#/entities/AdminAuthProof" },
+      "description": "Write-only atomic proof documents for admin verification and mutations."
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "Product categories publicly browsable by customers and managed by admin."
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "ROMEL product catalog, pricing, availability, and stock levels."
+    },
+    "/stock_movements/{movementId}": {
+      "schema": { "$ref": "#/entities/StockMovement" },
+      "description": "Immutable inventory and price audit log written by admin."
+    }
+  }
+}
